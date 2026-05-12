@@ -1,0 +1,25 @@
+[package]
+name = "hash256-miner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethers = "2.0.14"
+tokio = { version = "1.28", features = ["full"] }
+hex = "0.4.3"
+rayon = "1.10.0"
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+num_cpus = "1.16.0"
+dotenvy = "0.15.7"
+ocl = { version = "0.19.7", optional = true }
+
+[features]
+default = []
+gpu = ["dep:ocl"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
