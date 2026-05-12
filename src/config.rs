@@ -26,7 +26,9 @@ impl MinerMode {
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub mode: MinerMode,
-    pub rpc_url: String,
+    pub rpc_urls: Vec<String>,
+    pub rpc_retry_rounds: u32,
+    pub rpc_retry_delay_ms: u64,
     pub contract: Address,
     pub batch_size: u64,
     pub threads: usize,
@@ -39,7 +41,41 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let mode = MinerMode::from_env();
-        let rpc_url = env::var("RPC_URL").unwrap_or_else(|_| DEFAULT_RPC_URL.to_string());
+        let mut rpc_urls = vec![
+            "https://ethereum.publicnode.com".to_string(),
+            "https://rpc.flashbots.net/fast".to_string(),
+            "https://rpc.ankr.com/eth".to_string(),
+            "https://cloudflare-eth.com".to_string(),
+        ];
+        if let Ok(primary) = env::var("RPC_URL") {
+            if !primary.trim().is_empty() {
+                rpc_urls.insert(0, primary);
+            }
+        }
+        if let Ok(list_raw) = env::var("RPC_URLS") {
+            let parsed: Vec<String> = list_raw
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !parsed.is_empty() {
+                rpc_urls = parsed;
+            }
+        }
+        rpc_urls.retain(|u| !u.trim().is_empty());
+        rpc_urls.dedup();
+        if rpc_urls.is_empty() {
+            rpc_urls.push(DEFAULT_RPC_URL.to_string());
+        }
+        let rpc_retry_rounds = env::var("RPC_RETRY_ROUNDS")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(5);
+        let rpc_retry_delay_ms = env::var("RPC_RETRY_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1500);
         let contract: Address = env::var("CONTRACT_ADDRESS")
             .unwrap_or_else(|_| DEFAULT_CONTRACT_ADDRESS.to_string())
             .parse()?;
@@ -66,7 +102,9 @@ impl AppConfig {
 
         Ok(Self {
             mode,
-            rpc_url,
+            rpc_urls,
+            rpc_retry_rounds,
+            rpc_retry_delay_ms,
             contract,
             batch_size,
             threads,

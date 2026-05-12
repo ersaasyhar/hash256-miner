@@ -12,6 +12,7 @@ use miner::cpu::mine_batch_cpu;
 use miner::gpu::GpuMiner;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = AppConfig::from_env()?;
 
-    let provider = Provider::<Http>::try_from(cfg.rpc_url.as_str())?;
+    let (provider, active_rpc) = connect_provider(&cfg).await?;
     let chain_id = provider.get_chainid().await?;
 
     let wallet: LocalWallet = cfg
@@ -60,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Contract: {:?}", cfg.contract);
     println!("Miner: {miner:?}");
+    println!("RPC: {active_rpc}");
     println!("Chain ID: {chain_id}");
     println!("Mode: {}", if gpu_miner.is_some() { "gpu" } else { "cpu" });
     println!("Threads (CPU fallback): {}", cfg.threads);
@@ -148,6 +150,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             state = refresh_state(&provider, chain_id, cfg.contract, miner, &state).await?;
         }
     }
+}
+
+async fn connect_provider(
+    cfg: &AppConfig,
+) -> Result<(Provider<Http>, String), Box<dyn std::error::Error>> {
+    let mut last_err = String::new();
+    for round in 1..=cfg.rpc_retry_rounds {
+        for url in &cfg.rpc_urls {
+            match Provider::<Http>::try_from(url.as_str()) {
+                Ok(provider) => match provider.get_chainid().await {
+                    Ok(_) => return Ok((provider, url.clone())),
+                    Err(e) => {
+                        last_err = format!("RPC {url} probe failed: {e}");
+                    }
+                },
+                Err(e) => {
+                    last_err = format!("RPC {url} init failed: {e}");
+                }
+            }
+        }
+        if round < cfg.rpc_retry_rounds {
+            println!(
+                "RPC connect retry {round}/{} failed: {last_err}. Sleeping {} ms...",
+                cfg.rpc_retry_rounds, cfg.rpc_retry_delay_ms
+            );
+            sleep(Duration::from_millis(cfg.rpc_retry_delay_ms)).await;
+        }
+    }
+    Err(format!("all RPC endpoints failed after {} rounds: {last_err}", cfg.rpc_retry_rounds).into())
 }
 
 async fn submit_solution(
